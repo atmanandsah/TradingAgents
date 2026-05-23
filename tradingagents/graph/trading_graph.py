@@ -373,7 +373,8 @@ class TradingAgentsGraph:
         self.memory_log.store_decision(
             ticker=company_name,
             trade_date=trade_date,
-            final_trade_decision=final_state["final_trade_decision"],
+            # final_trade_decision=final_state["final_trade_decision"],
+            final_trade_decision=final_decision,
         )
 
         # Clear checkpoint on successful completion to avoid stale state.
@@ -382,7 +383,8 @@ class TradingAgentsGraph:
                 self.config["data_cache_dir"], company_name, str(trade_date)
             )
 
-        return final_state, self.process_signal(final_state["final_trade_decision"])
+        # return final_state, self.process_signal(final_state["final_trade_decision"])
+        return final_state, self.process_signal(final_decision)
 
     def _log_state(self, trade_date, final_state):
         """Log the final state to a JSON file."""

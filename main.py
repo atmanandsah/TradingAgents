@@ -7,6 +7,9 @@ from tradingagents.default_config import DEFAULT_CONFIG
 # editing this script. Override individual keys here only when you
 # want a hard-coded value that should ignore the environment.
 config = DEFAULT_CONFIG.copy()
+config["llm_provider"] = "ollama"
+config["deep_think_llm"] = "llama3.1"
+config["quick_think_llm"] = "llama3.1"
 
 # Initialize with custom config
 ta = TradingAgentsGraph(debug=True, config=config)
