@@ -14,9 +14,29 @@ config["quick_think_llm"] = "llama3.1"
 # Initialize with custom config
 ta = TradingAgentsGraph(debug=True, config=config)
 
-# forward propagate
-_, decision = ta.propagate("NVDA", "2024-05-10")
-print(decision)
+# User-specified Stocks of Indian Market (NSE)
+indian_stocks = [
+    "DATAPATTNS.NS",
+    "AXISCADES.NS",
+    "BEL.NS",
+    "HAL.NS",
+    "BHARATFORG.NS",
+    "BDL.NS",
+    "MTARTECH.NS",
+    "GRSE.NS"
+]
+
+import datetime
+today_date = datetime.datetime.now().strftime("%Y-%m-%d")
+
+for stock in indian_stocks:
+    print(f"\n--- Scanning {stock} for {today_date} ---")
+    try:
+        _, decision = ta.propagate(stock, today_date)
+        print(f"Decision for {stock}:")
+        print(decision)
+    except Exception as e:
+        print(f"Error scanning {stock}: {e}")
 
 # Memorize mistakes and reflect
 # ta.reflect_and_remember(1000) # parameter is the position returns

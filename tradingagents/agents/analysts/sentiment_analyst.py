@@ -29,6 +29,7 @@ from tradingagents.agents.utils.agent_utils import (
 )
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
+from tradingagents.dataflows.twitter import fetch_twitter_posts
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -55,6 +56,7 @@ def create_sentiment_analyst(llm):
         news_block = get_news.func(ticker, start_date, end_date)
         stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
         reddit_block = fetch_reddit_posts(ticker)
+        twitter_block = fetch_twitter_posts(ticker, limit=15)
 
         system_message = _build_system_message(
             ticker=ticker,
@@ -63,6 +65,7 @@ def create_sentiment_analyst(llm):
             news_block=news_block,
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
+            twitter_block=twitter_block,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -104,6 +107,7 @@ def _build_system_message(
     news_block: str,
     stocktwits_block: str,
     reddit_block: str,
+    twitter_block: str,
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
     return f"""You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
@@ -131,6 +135,13 @@ Community discussion. Engagement signal via upvote score and comment count. Subr
 {reddit_block}
 <end_of_reddit>
 
+### X.com (Twitter) posts — real-time discussion and influencer commentary
+Recent posts discussing the company. Look for overarching themes, retail sentiment, and potential influencer impact.
+
+<start_of_twitter>
+{twitter_block}
+<end_of_twitter>
+
 ## How to analyze this data (best practices)
 
 1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone.
@@ -154,7 +165,7 @@ Community discussion. Engagement signal via upvote score and comment count. Subr
 Produce a sentiment report covering, in order:
 
 1. **Overall sentiment direction** — Bullish / Bearish / Neutral / Mixed — with a brief confidence note based on data quality and sample size.
-2. **Source-by-source breakdown** — what each of news / StockTwits / Reddit is telling you, with specific evidence (cite message counts, ratios, notable posts).
+2. **Source-by-source breakdown** — what each of news / StockTwits / Reddit / X.com is telling you, with specific evidence (cite message counts, ratios, notable posts).
 3. **Divergences, alignments, and key narratives** across sources.
 4. **Catalysts and risks** surfaced by the data.
 5. **Markdown table** at the end summarizing key sentiment signals, their direction, source, and supporting evidence.
