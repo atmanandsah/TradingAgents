@@ -1,3 +1,8 @@
+import logging
+
+# Enable INFO-level logs to appear in the terminal
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 
