@@ -52,7 +52,7 @@ def _relaunch_brave_with_debug() -> bool:
     return False
 
 
-def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 60) -> str:
+def fetch_twitter_posts(ticker: str, limit: int = 50, timeout_sec: int = 60) -> str:
     """Fetch recent tweets for a ticker using your existing, logged-in Brave browser.
     
     Connects to the already-running Brave browser via CDP, opens a NEW TAB for the
@@ -62,13 +62,10 @@ def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 60) -> 
     if not sync_playwright:
         return "<twitter unavailable: Playwright not installed>"
 
-    # Standardize the cashtag format
-    cashtag = ticker.upper()
-    if not cashtag.startswith("$"):
-        cashtag = f"${cashtag}"
-
-    # Often the `.NS` suffix confuses Twitter search, strip it
-    base_cashtag = cashtag.split(".")[0]
+    # Remove .NS suffix and strip any $ prefix
+    base_cashtag = ticker.upper().split(".")[0]
+    if base_cashtag.startswith("$"):
+        base_cashtag = base_cashtag[1:]
 
     posts: List[str] = []
     page = None
@@ -88,8 +85,18 @@ def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 60) -> 
             context = browser.contexts[0]
             logger.info(f"Connected! Browser has {len(context.pages)} existing tab(s)")
 
+            # Calculate the date 5 days ago for the search filter
+            import datetime
+            import urllib.parse
+            five_days_ago = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+            
+            # Build the query: "TICKER since:YYYY-MM-DD"
+            search_query = f"{base_cashtag} since:{five_days_ago}"
+            encoded_query = urllib.parse.quote(search_query)
+
             # Open a BRAND NEW tab - doesn't touch your existing tabs
-            search_url = f"https://x.com/search?q={base_cashtag}&src=typed_query&f=live"
+            # f=live (Latest), pf=on (People you follow)
+            search_url = f"https://x.com/search?q={encoded_query}&src=typed_query&f=live&pf=on"
             logger.info(f"Opening new tab for: {search_url}")
             page = context.new_page()
             page.goto(search_url, timeout=30000)
@@ -104,18 +111,40 @@ def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 60) -> 
                 logger.warning("Timeout waiting for tweets - possibly a login wall or rate limit.")
                 return f"<twitter unavailable: Timeout waiting for tweets for {base_cashtag}>"
 
-            # Allow tweets to fully render
-            time.sleep(2)
+            # Set viewport so scrollHeight and innerHeight are accurate
+            page.set_viewport_size({"width": 1280, "height": 800})
 
-            # Extract tweets
-            tweet_elements = page.query_selector_all(tweet_selector)
-            for i, element in enumerate(tweet_elements[:limit]):
-                try:
-                    text_content = element.inner_text()
-                    cleaned_text = " ".join(text_content.split("\n"))
-                    posts.append(f"[{i+1}] {cleaned_text}")
-                except Exception as e:
-                    logger.debug(f"Failed to parse tweet element: {e}")
+            # X.com uses virtual DOM recycling — off-screen tweets get REMOVED from the DOM.
+            # So we must collect tweet text on every scroll step and deduplicate.
+            seen_texts: set = set()
+            
+            logger.info(f"Scrolling to collect up to {limit} unique tweets...")
+            for scroll_attempt in range(30):  # Max 30 scroll attempts
+                tweet_elements = page.query_selector_all(tweet_selector)
+                new_this_round = 0
+                for element in tweet_elements:
+                    try:
+                        text_content = element.inner_text().strip()
+                        if text_content and text_content not in seen_texts:
+                            seen_texts.add(text_content)
+                            cleaned = " ".join(text_content.split("\n"))
+                            posts.append(f"[{len(posts)+1}] {cleaned}")
+                            new_this_round += 1
+                    except Exception as e:
+                        logger.debug(f"Failed to parse tweet: {e}")
+
+                logger.info(f"  Scroll {scroll_attempt+1}: {len(posts)} unique tweets collected (+{new_this_round} new)")
+
+                if len(posts) >= limit:
+                    logger.info(f"Reached target of {limit} tweets!")
+                    break
+                if new_this_round == 0 and scroll_attempt > 2:
+                    logger.info("No new tweets in this scroll. End of feed reached.")
+                    break
+
+                # Scroll to bottom of page to trigger next batch
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(2.5)
 
     except Exception as e:
         logger.error(f"Playwright error during Twitter fetch: {e}")
@@ -130,5 +159,6 @@ def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 60) -> 
 
     if not posts:
         return f"<no Twitter posts found for {base_cashtag}>"
+    print("posts",posts)
 
     return "\n\n".join(posts)
