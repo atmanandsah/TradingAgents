@@ -1,15 +1,20 @@
-"""X.com (Twitter) real-time scraper using Playwright.
+"""X.com (Twitter) real-time scraper using Playwright CDP.
 
-This module uses Playwright to open a visible Chromium browser (headless=False)
-and navigates to X.com to search for the given ticker (e.g. `$RELIANCE.NS` or `$RELIANCE`).
-It extracts recent posts from the search results.
+Connects to your EXISTING, running Brave browser via Chrome DevTools Protocol (CDP).
+Opens a new tab in your browser, navigates to X.com and extracts recent posts.
 
-Note: X.com heavily restricts search for unauthenticated users. The browser will
-remain open visibly to allow the user to log in if a login wall is encountered.
+Prerequisites (one-time setup):
+  Run this once to relaunch Brave with remote debugging enabled:
+    /Applications/Brave\\ Browser.app/Contents/MacOS/Brave\\ Browser --remote-debugging-port=9222
+  
+  After the first run of your script, Brave will be automatically relaunched with
+  remote debugging enabled and will stay that way until you manually restart it.
 """
 
 import logging
+import subprocess
 import time
+import os
 from typing import List
 
 try:
@@ -19,86 +24,111 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 45) -> str:
-    """Fetch recent tweets for a ticker using Playwright.
+BRAVE_PATH = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+DEBUG_PORT = 9222
+
+
+def _is_brave_running_with_debug() -> bool:
+    """Check if Brave is already running with remote debugging on port 9222."""
+    result = subprocess.run(
+        ["lsof", "-i", f":{DEBUG_PORT}", "-sTCP:LISTEN"],
+        capture_output=True, text=True
+    )
+    return len(result.stdout.strip()) > 0
+
+
+def _relaunch_brave_with_debug() -> bool:
+    """Gracefully quit Brave and relaunch it with remote debugging enabled."""
+    logger.info("Relaunching Brave Browser with remote debugging enabled...")
+    os.system("osascript -e 'quit app \"Brave Browser\"'")
+    time.sleep(2)
+    subprocess.Popen([BRAVE_PATH, f"--remote-debugging-port={DEBUG_PORT}", "--no-first-run"])
+    for _ in range(15):
+        time.sleep(1)
+        if _is_brave_running_with_debug():
+            logger.info(f"Brave is ready with remote debugging on port {DEBUG_PORT}")
+            return True
+    logger.error("Brave did not start with remote debugging in time.")
+    return False
+
+
+def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 60) -> str:
+    """Fetch recent tweets for a ticker using your existing, logged-in Brave browser.
     
-    Opens a visible browser window, searches for the cashtag, and extracts posts.
-    Provides enough time for the user to manually log in if prompted.
+    Connects to the already-running Brave browser via CDP, opens a NEW TAB for the
+    X.com search, scrapes tweets, then closes only that tab.
+    Your other Brave tabs are untouched.
     """
     if not sync_playwright:
         return "<twitter unavailable: Playwright not installed>"
-        
+
     # Standardize the cashtag format
     cashtag = ticker.upper()
     if not cashtag.startswith("$"):
         cashtag = f"${cashtag}"
-        
-    # Often the `.NS` suffix confuses Twitter search, so we might want to search both
-    # or just use the base name if it has a suffix. But we'll search the exact cashtag first.
+
+    # Often the `.NS` suffix confuses Twitter search, strip it
     base_cashtag = cashtag.split(".")[0]
 
     posts: List[str] = []
-    
+    page = None
+
     try:
+        # Ensure Brave is running with remote debugging
+        if not _is_brave_running_with_debug():
+            if not _relaunch_brave_with_debug():
+                return "<twitter unavailable: Could not start Brave with remote debugging>"
+
         with sync_playwright() as p:
-            import os
-            user_data_dir = os.path.expanduser("~/.tradingagents/playwright_chrome_profile")
-            os.makedirs(user_data_dir, exist_ok=True)
-            
-            # Use a persistent context so your Twitter login is saved across runs
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                headless=False,
-                viewport={'width': 1280, 'height': 800},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-            page = context.pages[0]
-            
-            # Go to the search page directly
+            # Connect to the EXISTING Brave browser - no closing, no new window
+            logger.info(f"Connecting to existing Brave browser on port {DEBUG_PORT}...")
+            browser = p.chromium.connect_over_cdp(f"http://localhost:{DEBUG_PORT}")
+
+            # Use the existing logged-in context (your normal browser session)
+            context = browser.contexts[0]
+            logger.info(f"Connected! Browser has {len(context.pages)} existing tab(s)")
+
+            # Open a BRAND NEW tab - doesn't touch your existing tabs
             search_url = f"https://x.com/search?q={base_cashtag}&src=typed_query&f=live"
-            logger.info(f"Navigating to {search_url}...")
-            
-            page.goto(search_url, wait_until="domcontentloaded")
-            
-            # Wait for either tweets to load OR a login prompt.
-            # We give a generous timeout so the user has time to type their password if needed.
-            logger.info("Waiting for tweets to load or for user to log in manually...")
-            
-            # This selector targets the article elements which contain tweets
+            logger.info(f"Opening new tab for: {search_url}")
+            page = context.new_page()
+            page.goto(search_url, timeout=30000)
+
+            # This selector targets tweet article elements
             tweet_selector = "article[data-testid='tweet']"
-            
+            logger.info("Waiting for tweets to load...")
+
             try:
-                # Wait up to timeout_sec for tweets to appear
                 page.wait_for_selector(tweet_selector, timeout=timeout_sec * 1000)
             except PlaywrightTimeoutError:
-                logger.warning(f"Timeout waiting for tweets. The page might be stuck on a login wall or CAPTCHA.")
-                return f"<twitter unavailable: Timeout waiting for tweets for {base_cashtag}. Possibly blocked by login wall.>"
-                
-            # Allow some time for tweets to fully render
-            time.sleep(3)
-            
+                logger.warning("Timeout waiting for tweets - possibly a login wall or rate limit.")
+                return f"<twitter unavailable: Timeout waiting for tweets for {base_cashtag}>"
+
+            # Allow tweets to fully render
+            time.sleep(2)
+
             # Extract tweets
             tweet_elements = page.query_selector_all(tweet_selector)
-            
             for i, element in enumerate(tweet_elements[:limit]):
                 try:
-                    # Extract the text content of the tweet
                     text_content = element.inner_text()
-                    # Clean up the text a bit (removing multiple newlines)
                     cleaned_text = " ".join(text_content.split("\n"))
                     posts.append(f"[{i+1}] {cleaned_text}")
                 except Exception as e:
-                    logger.debug(f"Failed to parse a tweet element: {e}")
-                    
-            context.close()
-            
+                    logger.debug(f"Failed to parse tweet element: {e}")
+
     except Exception as e:
         logger.error(f"Playwright error during Twitter fetch: {e}")
-        return f"<twitter unavailable: {type(e).__name__}>"
-        
+        return f"<twitter unavailable: {type(e).__name__}: {e}>"
+    finally:
+        # Close only the tab we opened, leave everything else untouched
+        if page and not page.is_closed():
+            try:
+                page.close()
+            except Exception:
+                pass
+
     if not posts:
         return f"<no Twitter posts found for {base_cashtag}>"
-        
-    # Format the return string
-    formatted_posts = "\n\n".join(posts)
-    return formatted_posts
+
+    return "\n\n".join(posts)

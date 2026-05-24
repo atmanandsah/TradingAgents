@@ -13,7 +13,7 @@ config["quick_think_llm"] = "llama3.1"
 config["analysts_only"] = True
 
 # Initialize with custom config
-ta = TradingAgentsGraph(debug=True, config=config)
+ta = TradingAgentsGraph(selected_analysts=["social"], debug=True, config=config)
 
 # User-specified Stocks of Indian Market (NSE)
 indian_stocks = [
