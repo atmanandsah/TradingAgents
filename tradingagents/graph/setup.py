@@ -41,6 +41,7 @@ class GraphSetup:
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
         """
+        print("analysts_only",analysts_only)
         plan = build_analyst_execution_plan(
             selected_analysts,
             concurrency_limit=self.analyst_concurrency_limit,
@@ -159,5 +160,13 @@ class GraphSetup:
             )
     
             workflow.add_edge("Portfolio Manager", END)
+                # 1. All nodes registered
+        print("NODES:", list(workflow.nodes.keys()))
+
+        # 2. All edges (fixed connections)
+        print("EDGES:", workflow.edges)
+
+        # 3. All conditional edges (branching logic)
+        print("CONDITIONAL EDGES:", workflow.branches)
 
         return workflow
