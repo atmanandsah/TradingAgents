@@ -47,11 +47,13 @@ class GraphSetup:
             concurrency_limit=self.analyst_concurrency_limit,
         )
 
+        from tradingagents.agents.analysts.screener_analyst import create_screener_analyst
         analyst_factories = {
             "market": lambda: create_market_analyst(self.quick_thinking_llm),
             "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
             "news": lambda: create_news_analyst(self.quick_thinking_llm),
             "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
+            "screener": lambda: create_screener_analyst(),  # uses vision LLM directly
         }
 
         # Create researcher and manager nodes
@@ -71,10 +73,13 @@ class GraphSetup:
         workflow = StateGraph(AgentState)
 
         # Add analyst nodes to the graph
+        # Screener analyst uses Playwright directly (no LangChain tool node needed)
+        TOOLLESS_ANALYSTS = {"screener"}
         for spec in plan.specs:
             workflow.add_node(spec.agent_node, analyst_factories[spec.key]())
             workflow.add_node(spec.clear_node, create_msg_delete())
-            workflow.add_node(spec.tool_node, self.tool_nodes[spec.key])
+            if spec.key not in TOOLLESS_ANALYSTS:
+                workflow.add_node(spec.tool_node, self.tool_nodes[spec.key])
 
         # Add other nodes
         if not analysts_only:
@@ -97,13 +102,17 @@ class GraphSetup:
             current_tools = spec.tool_node
             current_clear = spec.clear_node
 
-            # Add conditional edges for current analyst
-            workflow.add_conditional_edges(
-                current_analyst,
-                getattr(self.conditional_logic, f"should_continue_{spec.key}"),
-                [current_tools, current_clear],
-            )
-            workflow.add_edge(current_tools, current_analyst)
+            if spec.key in TOOLLESS_ANALYSTS:
+                # Toolless analysts (e.g. screener) go directly agent → clear
+                workflow.add_edge(current_analyst, current_clear)
+            else:
+                # Add conditional edges for current analyst
+                workflow.add_conditional_edges(
+                    current_analyst,
+                    getattr(self.conditional_logic, f"should_continue_{spec.key}"),
+                    [current_tools, current_clear],
+                )
+                workflow.add_edge(current_tools, current_analyst)
 
             # Connect to next analyst or to END/Bull Researcher if this is the last analyst
             if i < len(plan.specs) - 1:

@@ -51,6 +51,13 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         tool_node="tools_fundamentals",
         report_key="fundamentals_report",
     ),
+    "screener": AnalystNodeSpec(
+        key="screener",
+        agent_node="Screener Analyst",
+        clear_node="Msg Clear Screener",
+        tool_node="tools_screener",  # unused — screener analyst calls Playwright directly
+        report_key="screener_report",
+    ),
 }
 
 
