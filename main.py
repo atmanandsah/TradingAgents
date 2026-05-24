@@ -10,6 +10,7 @@ config = DEFAULT_CONFIG.copy()
 config["llm_provider"] = "ollama"
 config["deep_think_llm"] = "llama3.1"
 config["quick_think_llm"] = "llama3.1"
+config["analysts_only"] = True
 
 # Initialize with custom config
 ta = TradingAgentsGraph(debug=True, config=config)

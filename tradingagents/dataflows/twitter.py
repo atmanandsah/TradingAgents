@@ -41,13 +41,18 @@ def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 45) -> 
     
     try:
         with sync_playwright() as p:
-            # headless=False so the user can see it and intervene (log in/captcha)
-            browser = p.chromium.launch(headless=False)
-            context = browser.new_context(
+            import os
+            user_data_dir = os.path.expanduser("~/.tradingagents/playwright_chrome_profile")
+            os.makedirs(user_data_dir, exist_ok=True)
+            
+            # Use a persistent context so your Twitter login is saved across runs
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                headless=False,
                 viewport={'width': 1280, 'height': 800},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            page = context.new_page()
+            page = context.pages[0]
             
             # Go to the search page directly
             search_url = f"https://x.com/search?q={base_cashtag}&src=typed_query&f=live"
@@ -85,7 +90,7 @@ def fetch_twitter_posts(ticker: str, limit: int = 15, timeout_sec: int = 45) -> 
                 except Exception as e:
                     logger.debug(f"Failed to parse a tweet element: {e}")
                     
-            browser.close()
+            context.close()
             
     except Exception as e:
         logger.error(f"Playwright error during Twitter fetch: {e}")
