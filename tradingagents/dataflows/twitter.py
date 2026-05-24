@@ -109,6 +109,8 @@ def fetch_twitter_posts(ticker: str, limit: int = 50, timeout_sec: int = 60) -> 
                 page.wait_for_selector(tweet_selector, timeout=timeout_sec * 1000)
             except PlaywrightTimeoutError:
                 logger.warning("Timeout waiting for tweets - possibly a login wall or rate limit.")
+                page.close()  # Close the tab before returning
+                page = None
                 return f"<twitter unavailable: Timeout waiting for tweets for {base_cashtag}>"
 
             # Set viewport so scrollHeight and innerHeight are accurate
@@ -146,14 +148,20 @@ def fetch_twitter_posts(ticker: str, limit: int = 50, timeout_sec: int = 60) -> 
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 time.sleep(2.5)
 
+            # Close the tab we opened - INSIDE the playwright context so it actually works
+            logger.info("Closing the search tab...")
+            page.close()
+            page = None  # Mark as closed so the finally block doesn't try again
+
     except Exception as e:
         logger.error(f"Playwright error during Twitter fetch: {e}")
         return f"<twitter unavailable: {type(e).__name__}: {e}>"
     finally:
-        # Close only the tab we opened, leave everything else untouched
-        if page and not page.is_closed():
+        # Fallback close in case of unexpected error mid-scroll
+        if page is not None:
             try:
-                page.close()
+                if not page.is_closed():
+                    page.close()
             except Exception:
                 pass
 
