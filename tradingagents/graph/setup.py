@@ -47,23 +47,24 @@ class GraphSetup:
         )
 
         analyst_factories = {
-            "market": lambda: create_market_analyst(self.quick_thinking_llm),
+            # "market": lambda: create_market_analyst(self.quick_thinking_llm),
             "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
-            "news": lambda: create_news_analyst(self.quick_thinking_llm),
-            "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
+            # "news": lambda: create_news_analyst(self.quick_thinking_llm),
+            # "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
         }
 
         # Create researcher and manager nodes
-        bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
-        bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
-        research_manager_node = create_research_manager(self.deep_thinking_llm)
-        trader_node = create_trader(self.quick_thinking_llm)
-
-        # Create risk analysis nodes
-        aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
-        neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
-        conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
-        portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
+        if not analysts_only:
+            bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
+            bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
+            research_manager_node = create_research_manager(self.deep_thinking_llm)
+            trader_node = create_trader(self.quick_thinking_llm)
+    
+            # Create risk analysis nodes
+            aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
+            neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
+            conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
+            portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
 
         # Create workflow
         workflow = StateGraph(AgentState)
@@ -75,14 +76,15 @@ class GraphSetup:
             workflow.add_node(spec.tool_node, self.tool_nodes[spec.key])
 
         # Add other nodes
-        workflow.add_node("Bull Researcher", bull_researcher_node)
-        workflow.add_node("Bear Researcher", bear_researcher_node)
-        workflow.add_node("Research Manager", research_manager_node)
-        workflow.add_node("Trader", trader_node)
-        workflow.add_node("Aggressive Analyst", aggressive_analyst)
-        workflow.add_node("Neutral Analyst", neutral_analyst)
-        workflow.add_node("Conservative Analyst", conservative_analyst)
-        workflow.add_node("Portfolio Manager", portfolio_manager_node)
+        if not analysts_only:
+            workflow.add_node("Bull Researcher", bull_researcher_node)
+            workflow.add_node("Bear Researcher", bear_researcher_node)
+            workflow.add_node("Research Manager", research_manager_node)
+            workflow.add_node("Trader", trader_node)
+            workflow.add_node("Aggressive Analyst", aggressive_analyst)
+            workflow.add_node("Neutral Analyst", neutral_analyst)
+            workflow.add_node("Conservative Analyst", conservative_analyst)
+            workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
         # Define edges
         # Start with the first analyst
@@ -112,49 +114,50 @@ class GraphSetup:
                     workflow.add_edge(current_clear, "Bull Researcher")
 
         # Add remaining edges
-        workflow.add_conditional_edges(
-            "Bull Researcher",
-            self.conditional_logic.should_continue_debate,
-            {
-                "Bear Researcher": "Bear Researcher",
-                "Research Manager": "Research Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Bear Researcher",
-            self.conditional_logic.should_continue_debate,
-            {
-                "Bull Researcher": "Bull Researcher",
-                "Research Manager": "Research Manager",
-            },
-        )
-        workflow.add_edge("Research Manager", "Trader")
-        workflow.add_edge("Trader", "Aggressive Analyst")
-        workflow.add_conditional_edges(
-            "Aggressive Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Conservative Analyst": "Conservative Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Conservative Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Neutral Analyst": "Neutral Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Neutral Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Aggressive Analyst": "Aggressive Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-
-        workflow.add_edge("Portfolio Manager", END)
+        if not analysts_only:
+            workflow.add_conditional_edges(
+                "Bull Researcher",
+                self.conditional_logic.should_continue_debate,
+                {
+                    "Bear Researcher": "Bear Researcher",
+                    "Research Manager": "Research Manager",
+                },
+            )
+            workflow.add_conditional_edges(
+                "Bear Researcher",
+                self.conditional_logic.should_continue_debate,
+                {
+                    "Bull Researcher": "Bull Researcher",
+                    "Research Manager": "Research Manager",
+                },
+            )
+            workflow.add_edge("Research Manager", "Trader")
+            workflow.add_edge("Trader", "Aggressive Analyst")
+            workflow.add_conditional_edges(
+                "Aggressive Analyst",
+                self.conditional_logic.should_continue_risk_analysis,
+                {
+                    "Conservative Analyst": "Conservative Analyst",
+                    "Portfolio Manager": "Portfolio Manager",
+                },
+            )
+            workflow.add_conditional_edges(
+                "Conservative Analyst",
+                self.conditional_logic.should_continue_risk_analysis,
+                {
+                    "Neutral Analyst": "Neutral Analyst",
+                    "Portfolio Manager": "Portfolio Manager",
+                },
+            )
+            workflow.add_conditional_edges(
+                "Neutral Analyst",
+                self.conditional_logic.should_continue_risk_analysis,
+                {
+                    "Aggressive Analyst": "Aggressive Analyst",
+                    "Portfolio Manager": "Portfolio Manager",
+                },
+            )
+    
+            workflow.add_edge("Portfolio Manager", END)
 
         return workflow
