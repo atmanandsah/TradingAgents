@@ -58,7 +58,7 @@ def fetch_screener_pl_screenshot(ticker: str) -> Optional[bytes]:
     # Strip .NS suffix
     base_ticker = ticker.upper().split(".")[0]
     # Screener.in URL for consolidated financials
-    screener_url = f"https://www.screener.in/company/{base_ticker}/consolidated/"
+    screener_url = f"https://www.screener.in/company/{base_ticker}/"
 
     page = None
     try:

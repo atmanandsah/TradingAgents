@@ -20,9 +20,9 @@ VISION_MODEL = "llama3.2-vision"
 def _analyze_pl_with_vision(screenshot_bytes: bytes, ticker: str) -> str:
     """Send a P&L screenshot to llama3.2-vision via Ollama and return analysis."""
     try:
-        from langchain_ollama import ChatOllama
+        from tradingagents.llm_clients.factory import create_llm_client
     except ImportError:
-        return "<screener unavailable: langchain-ollama not installed>"
+        return "<screener unavailable: llm factory not found>"
 
     image_b64 = base64.b64encode(screenshot_bytes).decode("utf-8")
 
@@ -49,7 +49,8 @@ Be specific with numbers you can read from the table. Format your response clear
     ])
 
     try:
-        llm = ChatOllama(model=VISION_MODEL, temperature=0)
+        client = create_llm_client(provider="ollama", model=VISION_MODEL, temperature=0)
+        llm = client.get_llm()
         logger.info(f"Sending P&L screenshot to {VISION_MODEL} for analysis...")
         response = llm.invoke([message])
         return response.content
@@ -70,12 +71,14 @@ def create_screener_analyst():
 
         from tradingagents.dataflows.screener import fetch_screener_pl_screenshot
         screenshot_bytes = fetch_screener_pl_screenshot(ticker)
+        # print("[Screener Analyst] Screenshot captured for {ticker} : ", screenshot_bytes)
 
         if screenshot_bytes is None:
             report = f"<screener unavailable: Could not capture P&L screenshot for {ticker}>"
             logger.warning(report)
         else:
             report = _analyze_pl_with_vision(screenshot_bytes, ticker)
+            print(f"[Screener Analyst] P&L analysis complete for {ticker}: {report}")
             logger.info(f"[Screener Analyst] P&L analysis complete for {ticker}")
 
         # Return the report into the state
