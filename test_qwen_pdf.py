@@ -23,6 +23,78 @@ VISION_MODEL = "qwen2.5vl:3b"   # fast vision model for per-page extraction
 TEXT_MODEL   = "llama3.1"        # fast text model for final coherent summary
 
 # ──────────────────────────────────────────────────────────────────
+# Telegram & Environment helpers
+# ──────────────────────────────────────────────────────────────────
+
+def load_env_vars() -> dict:
+    env_vars = {}
+    for path in [os.path.join(os.getcwd(), ".env"), os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")]:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        v = v.split("#", 1)[0].strip()
+                        env_vars[k.strip()] = v.strip().strip("'\"")
+    for k in ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]:
+        if k in os.environ:
+            env_vars[k] = os.environ[k]
+    return env_vars
+
+def send_telegram_document(token: str, chat_id: str, filepath: str, caption: str = ""):
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    boundary = "---TelegramBoundary---"
+    
+    try:
+        with open(filepath, "rb") as f:
+            file_content = f.read()
+    except Exception as e:
+        print(f"\n[Telegram] Error reading file for upload: {e}", flush=True)
+        return
+
+    filename = os.path.basename(filepath)
+    
+    parts = []
+    parts.append(f"--{boundary}".encode('utf-8'))
+    parts.append(f'Content-Disposition: form-data; name="chat_id"'.encode('utf-8'))
+    parts.append(''.encode('utf-8'))
+    parts.append(str(chat_id).encode('utf-8'))
+    
+    if caption:
+        parts.append(f"--{boundary}".encode('utf-8'))
+        parts.append(f'Content-Disposition: form-data; name="caption"'.encode('utf-8'))
+        parts.append(''.encode('utf-8'))
+        parts.append(caption.encode('utf-8'))
+        
+    parts.append(f"--{boundary}".encode('utf-8'))
+    parts.append(f'Content-Disposition: form-data; name="document"; filename="{filename}"'.encode('utf-8'))
+    parts.append('Content-Type: text/plain'.encode('utf-8'))
+    parts.append(''.encode('utf-8'))
+    parts.append(file_content)
+    parts.append(f"--{boundary}--".encode('utf-8'))
+    
+    body = b"\r\n".join(parts)
+    
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}"
+        },
+        method="POST"
+    )
+    
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp.read()
+        print(f"\n[Telegram] Report sent successfully to chat: {chat_id}", flush=True)
+    except Exception as e:
+        print(f"\n[Telegram] Error sending document: {e}", flush=True)
+
+# ──────────────────────────────────────────────────────────────────
 # PDF helpers
 # ──────────────────────────────────────────────────────────────────
 

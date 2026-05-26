@@ -14,6 +14,26 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="$SCRIPT_DIR/venv/bin/python"
+# ── Load Environment Variables Safely ──
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip commented or empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ ! "$line" =~ = ]] && continue
+        
+        # Strip inline comments (anything after #)
+        clean_line="${line%%#*}"
+        
+        # Extract and trim key/value
+        key=$(echo "${clean_line%%=*}" | tr -d '[:space:]')
+        value=$(echo "${clean_line#*=}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^["'\'' ]*//' -e 's/["'\'' ]*$//')
+        
+        if [ -n "$key" ]; then
+            export "$key=$value"
+        fi
+    done < "$SCRIPT_DIR/.env"
+fi
+
 QWEN_SCRIPT="$SCRIPT_DIR/test_qwen_pdf.py"
 
 # ── Arguments ──
@@ -74,8 +94,31 @@ for i in "${!PDF_FILES[@]}"; do
     # Run the analysis and save output
     if "$PYTHON" "$QWEN_SCRIPT" "$PDF" "$PROMPT" "$PAGE_RANGE" 2>&1 | tee "$OUTPUT_FILE"; then
         echo ""
+        
+        # ── Rename the report to the actual Company Name ──
+        # Extract the first H1 header line starting with #
+        COMPANY_NAME=$(grep -m 1 "^# " "$OUTPUT_FILE" | sed 's/^# //')
+        if [ -n "$COMPANY_NAME" ]; then
+            # Sanitize filename (keep only safe alphanumeric, space, dash, and underscore)
+            SAFE_COMPANY_NAME=$(echo "$COMPANY_NAME" | tr -cd 'A-Za-z0-9_ -')
+            if [ -n "$SAFE_COMPANY_NAME" ]; then
+                RENAMED_FILE="$OUTPUT_DIR/${SAFE_COMPANY_NAME}_analysis.txt"
+                mv "$OUTPUT_FILE" "$RENAMED_FILE"
+                OUTPUT_FILE="$RENAMED_FILE"
+            fi
+        fi
+
         echo "✅ Saved: $OUTPUT_FILE"
         ((SUCCESS++))
+
+        # ── Send to Telegram if tokens configured ──
+        if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+            echo "Sending report to Telegram..."
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                 -F chat_id="${TELEGRAM_CHAT_ID}" \
+                 -F document=@"${OUTPUT_FILE}" \
+                 -F caption="📊 Investment Report: $(basename "$OUTPUT_FILE" _analysis.txt)" >/dev/null
+        fi
     else
         echo ""
         echo "❌ Failed: $BASENAME.pdf"
