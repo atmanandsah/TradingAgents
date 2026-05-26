@@ -94,7 +94,11 @@ for i in "${!PDF_FILES[@]}"; do
     # Run the analysis and save output
     if "$PYTHON" "$QWEN_SCRIPT" "$PDF" "$PROMPT" "$PAGE_RANGE" 2>&1 | tee "$OUTPUT_FILE"; then
         echo ""
-        
+        # ── Clean up progress logs from the final file ──
+        sed -i '' -e '/^Document:/d' -e '/^Processing:/d' -e '/^==/d' -e '/^PHASE/d' -e '/^\[Phase/d' "$OUTPUT_FILE"
+        # Strip leading blank lines
+        sed -i '' -e '/./,$!d' "$OUTPUT_FILE"
+
         # ── Rename the report to the actual Company Name ──
         # Extract the first H1 header line starting with #
         COMPANY_NAME=$(grep -m 1 "^# " "$OUTPUT_FILE" | sed 's/^# //')
