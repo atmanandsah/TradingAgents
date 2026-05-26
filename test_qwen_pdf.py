@@ -5,6 +5,7 @@ import json
 import urllib.request
 import urllib.error
 import socket
+import datetime
 
 socket.setdefaulttimeout(300)  # 5 min per page
 
@@ -17,8 +18,8 @@ except ImportError:
 OLLAMA_GENERATE_URL = "http://localhost:11434/api/generate"  # streaming: page extraction
 OLLAMA_CHAT_URL     = "http://localhost:11434/api/chat"      # non-streaming: final summary
 
-# VISION_MODEL = "qwen2.5vl:3b"   # fast vision model for per-page extraction
-VISION_MODEL = "llama3.1"   # fast vision model for per-page extraction
+VISION_MODEL = "qwen2.5vl:3b"   # fast vision model for per-page extraction
+# VISION_MODEL = "llama3.1"   # fast vision model for per-page extraction
 TEXT_MODEL   = "llama3.1"        # fast text model for final coherent summary
 
 # ──────────────────────────────────────────────────────────────────
@@ -78,14 +79,15 @@ def extract_page(b64_img: str, page_num: int, total_pages: int) -> str:
         method="POST"
     )
 
-    print(f"\n[Phase 1] Extracting Page {page_num + 1}/{total_pages}...", flush=True)
+    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    print(f"\n[Phase 1] [{ts}] Extracting Page {page_num + 1}/{total_pages}...", flush=True)
     tokens = []
     try:
         with urllib.request.urlopen(req, timeout=300) as response:
             for line in response:
                 chunk = json.loads(line.decode("utf-8"))
                 token = chunk.get("response", "")
-                print(token, end="", flush=True)
+                # print(token, end="", flush=True)
                 tokens.append(token)
                 if chunk.get("done", False):
                     break
@@ -111,14 +113,6 @@ def synthesize_summary(all_page_texts: list[str], user_prompt: str) -> str:
         f"--- PAGE {i + 1} ---\n{text}" for i, text in enumerate(all_page_texts)
     )
 
-    # ── CRITICAL: Put document content FIRST, strict format instructions LAST.
-    # llama3.1 follows the LAST instruction it sees before generating. ──
-    system_message = (
-        "You are a professional equity research analyst specializing in Indian stock markets. "
-        "When given financial document content, you MUST respond using ONLY the exact 6-section "
-        "structured format requested. Never deviate from the format. Quote exact numbers."
-    )
-
     user_message = f"""DOCUMENT CONTENT ({len(all_page_texts)} pages total):
 
 {combined}
@@ -129,7 +123,106 @@ USER REQUEST: {user_prompt}
 
 ---
 
-NOW produce the analysis using EXACTLY this format. Fill every section using data from above:
+ROLE:
+You are a senior equity research analyst specialized in Indian listed companies and annual report analysis.
+
+TASK:
+Analyze the provided annual report / financial document and produce a structured investment-quality summary.
+
+==================================================
+CRITICAL FINANCIAL NORMALIZATION & VALIDATION RULES
+==================================================
+
+### 1. UNIT DETECTION IS MANDATORY
+Before extracting any financial number, identify the original reporting unit exactly as written in the source.
+Possible source units: lakh, crore, INR lakh, INR crore, INR million (Mn), INR billion, USD million. Never assume units.
+
+### 2. STANDARDIZE ALL OUTPUTS INTO ₹ CRORE ONLY
+Convert every extracted figure into ₹ crore format only.
+Mandatory conversion rules:
+- 1 crore = 100 lakh
+- 1 crore = 10 million
+- 1 million = 0.1 crore
+- 1 billion = 100 crore
+Examples:
+- ₹3,88,989 lakh = ₹3,889.89 crore
+- INR 7,016 Mn = ₹701.60 crore
+- INR 1,100 Mn = ₹110.00 crore
+Never output lakh, Mn, million, or raw source units in your final response.
+
+### 3. EXPLICIT MATHEMATICAL CONVERSION REQUIRED
+Do NOT copy values directly from source. Always detect source unit, convert mathematically, and verify final output.
+
+### 4. CONSOLIDATED VS STANDALONE RULE
+Always explicitly identify whether numbers are Consolidated or Standalone.
+Priority: 1. Consolidated financials, 2. Standalone financials only if consolidated unavailable.
+Never mix standalone and consolidated metrics in the same analysis.
+
+### 5. MANDATORY ARITHMETIC VALIDATION
+Before generating output, validate:
+- Revenue sanity: Revenue should not inflate by 10x or 100x after conversion.
+- Margin validation: Recalculate: EBITDA Margin = EBITDA / Revenue × 100; Net Margin = PAT / Revenue × 100. If reported and calculated margins mismatch materially, recompute.
+- Ratio sanity: PAT cannot exceed Revenue. Operating profit cannot exceed Revenue. Reject inconsistent extraction.
+
+### 6. OUTPUT FORMATTING RULES
+Always display values as: ₹X.XX crore, and percentages with max 2 decimals. Never display lakh, Mn, million, or scientific notation.
+
+### 7. MULTIPLE FIGURES RULE
+If multiple values exist, prioritize: 1. Latest FY consolidated, 2. Latest FY standalone, 3. Quarterly only if annual unavailable.
+
+### 8. SOURCE CONFIRMATION RULE
+For every major metric, verify source section, unit, and whether consolidated or standalone.
+
+### 9. RED FLAG FILTER
+List ONLY confirmed red flags explicitly present in the document. Do NOT infer or speculate.
+
+### 10. FINAL VALIDATION BEFORE OUTPUT
+Recheck all conversions, percentages, crore formatting, ensure no lakh/Mn values remain, and ensure all metrics belong to the same reporting basis. Do NOT infer units.
+
+==================================================
+STRICT FACTUALITY & ANTI-HALLUCINATION RULES
+==================================================
+- Do NOT infer sector unless explicitly mentioned.
+- Do NOT generate generic industry commentary.
+- Do NOT fabricate growth rates.
+- Do NOT fabricate promoter holding.
+- Do NOT fabricate ratios.
+- If a qualitative point or tailwind/headwind is not explicitly mentioned in the document, write: "Not explicitly discussed in provided document."
+- If value is unavailable, write: "Not explicitly disclosed."
+- If arithmetic validation fails, discard the extraction, recompute from raw values, and re-validate before final output.
+
+==================================================
+COGNITIVE WORKFLOW STEPS
+==================================================
+You MUST perform and display the following three steps before generating the final summary:
+
+### STEP 1 — RAW EXTRACTION TABLE
+Extract ONLY directly available raw figures from the source. Fill in this table:
+| Metric | Raw Value | Original Unit | Basis (Consolidated/Standalone) | Source Section/Page |
+|---|---|---|---|---|
+| Revenue | | | | |
+| PAT | | | | |
+| Operating Profit / EBITDA | | | | |
+| Other key metrics | | | | |
+
+### STEP 2 — UNIT NORMALIZATION TABLE
+Convert all extracted raw values mathematically into ₹ crore:
+- Show the math: `Converted Value = Raw Value / Conversion Factor`
+- E.g., `3,88,989 lakh / 100 = ₹3,889.89 crore`
+- E.g., `7,016 Mn / 10 = ₹701.60 crore`
+
+### STEP 3 — RECONCILIATION VALIDATION
+Verify and show the arithmetic reconciliation:
+1. Is PAT <= Revenue? (Yes/No)
+2. Is EBITDA <= Revenue? (Yes/No)
+3. Recalculate: EBITDA Margin = (EBITDA / Revenue) * 100. Does it match reported margins? (Show calculation)
+4. Recalculate: Net Margin = (PAT / Revenue) * 100. Does it match reported margins? (Show calculation)
+5. Are all values standardized to ₹ crore only? (Yes/No)
+
+==================================================
+OUTPUT FORMAT
+==================================================
+NOW produce the final summary using EXACTLY this format. Fill every section using data validated above:
 
 ## 1. FINANCIAL PERFORMANCE
 - **Revenue (Top Line):** Latest year figure + YoY growth %
@@ -167,12 +260,14 @@ List ONLY confirmed red flags found in the document:
 **Financial Health:** Improving / Stable / Deteriorating
 **Signal:** Bullish / Neutral / Bearish
 **Top Risk:** (one sentence)
+
+Do NOT infer units. Perform explicit mathematical conversion before generating output.
 """
 
     payload = {
         "model": TEXT_MODEL,
         "messages": [
-            {"role": "system", "content": system_message},
+            {"role": "system", "content": "You are a senior equity research analyst specialized in Indian listed companies and annual report analysis. When given financial document content, you MUST respond using ONLY the exact structured format requested, applying all financial normalization and validation rules. Never deviate."},
             {"role": "user",   "content": user_message}
         ],
         "options": {"temperature": 0},  # temperature=0 forces strict format adherence
@@ -255,18 +350,34 @@ def main():
 
     # ── Phase 1: Extract each page individually ──
     all_page_texts = []
+    if ext == ".pdf":
+        doc = fitz.open(file_path)
     for page_num in pages_to_process:
+        text = ""
         if ext == ".pdf":
-            b64 = page_to_base64(file_path, page_num)
+            page = doc.load_page(page_num)
+            extracted_text = page.get_text("text").strip()
+            # Use native text if it contains substantial content, otherwise fall back to vision
+            if len(extracted_text) > 100:
+                ts = datetime.datetime.now().strftime("%H:%M:%S")
+                print(f"[Phase 1] [{ts}] Page {page_num + 1}/{total_pages}: Extracted native text directly (Skipped Vision)...", flush=True)
+                text = extracted_text
+                # print("text",text)
+            else:
+                b64 = page_to_base64(file_path, page_num)
+                text = extract_page(b64, page_num, total_pages)
         else:
             with open(file_path, "rb") as f:
                 b64 = base64.b64encode(f.read()).decode("utf-8")
-        text = extract_page(b64, page_num, total_pages)
+            text = extract_page(b64, page_num, total_pages)
         all_page_texts.append(text)
+    if ext == ".pdf":
+        doc.close()
 
     print("\n" + "=" * 70)
     print("PHASE 2: Synthesizing unified summary...")
     print("=" * 70)
+    # print("all_page_texts",all_page_texts)
 
     # ── Phase 2: Synthesize into one coherent summary ──
     final_summary = synthesize_summary(all_page_texts, user_prompt)
