@@ -224,6 +224,8 @@ OUTPUT FORMAT
 ==================================================
 NOW produce the final summary using EXACTLY this format. Fill every section using data validated above:
 
+# [COMPANY NAME]
+
 ## 1. FINANCIAL PERFORMANCE
 - **Revenue (Top Line):** Latest year figure + YoY growth %
 - **Net Profit / PAT:** Latest figure + YoY growth %
