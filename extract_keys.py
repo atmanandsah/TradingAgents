@@ -2,13 +2,13 @@
 import json
 
 def extract_keys():
-    with open("venv/Upstock_universe.json", "r") as f:
+    with open("Upstock_universe.json", "r") as f:
         data = json.load(f)
     
     # Extract only the instrument keys
     keys = []
     for item in data:
-        if "instrument_key" in item and item.get("segment") == "NSE_EQ":
+        if "instrument_key" in item and item.get("instrument_type") == "EQ":
             keys.append(item["instrument_key"])
 
     

@@ -10,7 +10,7 @@ def _load_universe() -> None:
     global _UNIVERSE_MAP
     if _UNIVERSE_MAP:
         return
-    universe_path = os.path.join(os.path.dirname(__file__), "venv", "Upstock_universe.json")
+    universe_path = os.path.join(os.path.dirname(__file__),  "Upstock_universe.json")
     with open(universe_path, "r") as f:
         data = json.load(f)
     for item in data:
