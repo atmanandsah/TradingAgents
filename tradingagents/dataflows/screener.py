@@ -1,9 +1,10 @@
-"""Screener.in P&L scraper using Playwright CDP.
+"""Screener.in scraper — direct DOM extraction (no screenshots, no vision model).
 
-Connects to your existing Brave browser, navigates to screener.in for a given
-ticker, scrolls to the Profit & Loss section, and takes a screenshot of it.
-
-Returns the screenshot as PNG bytes for use with a vision LLM.
+Strategy:
+1. Open screener.in via Playwright CDP.
+2. Scroll full page to trigger lazy-loading of all sections.
+3. Extract table data directly from the DOM using JavaScript.
+4. Return structured plain-text tables for llama3.1 to analyze.
 """
 
 import logging
@@ -17,6 +18,12 @@ logger = logging.getLogger(__name__)
 BRAVE_PATH = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 DEBUG_PORT = 9222
 
+# Sections to extract: (CSS selector, friendly label)
+SECTIONS = [
+    ("#quarters",    "Quarterly Results"),
+    ("#profit-loss", "Profit & Loss"),
+]
+
 
 def _is_brave_running_with_debug() -> bool:
     result = subprocess.run(
@@ -27,40 +34,61 @@ def _is_brave_running_with_debug() -> bool:
 
 
 def _relaunch_brave_with_debug() -> bool:
-    logger.info("Relaunching Brave Browser with remote debugging enabled...")
+    logger.info("Relaunching Brave with remote debugging...")
     os.system("osascript -e 'quit app \"Brave Browser\"'")
     time.sleep(2)
     subprocess.Popen([BRAVE_PATH, f"--remote-debugging-port={DEBUG_PORT}", "--no-first-run"])
     for _ in range(15):
         time.sleep(1)
         if _is_brave_running_with_debug():
-            logger.info(f"Brave ready with remote debugging on port {DEBUG_PORT}")
             return True
-    logger.error("Brave did not start in time.")
     return False
 
 
-def fetch_screener_pl_screenshot(ticker: str) -> Optional[bytes]:
-    """Navigate to screener.in, find the P&L section, and return a screenshot.
+# JavaScript that converts a <table> element inside a section to plain text
+_TABLE_TO_TEXT_JS = """
+(sectionId) => {
+    const section = document.querySelector(sectionId);
+    if (!section) return null;
 
-    Args:
-        ticker: NSE ticker e.g. "DATAPATTNS.NS" or "DATAPATTNS"
+    const table = section.querySelector('table');
+    if (!table) return null;
 
-    Returns:
-        PNG screenshot bytes of the Profit & Loss section, or None on failure.
+    const rows = Array.from(table.querySelectorAll('tr'));
+    return rows.map(row => {
+        const cells = Array.from(row.querySelectorAll('th, td'));
+        return cells.map(c => c.innerText.trim().replace(/\\n/g, ' ')).join(' | ');
+    }).join('\\n');
+}
+"""
+
+# JavaScript to extract the CAGR / compounded growth summary block
+_SUMMARY_JS = """
+(sectionId) => {
+    const section = document.querySelector(sectionId);
+    if (!section) return '';
+    const boxes = Array.from(section.querySelectorAll('.twenty-numbers, .flex-row'));
+    return boxes.map(b => b.innerText.trim()).join('\\n');
+}
+"""
+
+
+def fetch_screener_data(ticker: str) -> Optional[str]:
+    """Extract P&L and Quarterly Results as plain text from screener.in.
+
+    Returns a formatted text string ready to be sent to a text LLM.
+    Returns None on failure.
     """
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
     except ImportError:
-        logger.error("Playwright not installed. Run: pip install playwright && playwright install chromium")
+        logger.error("Playwright not installed.")
         return None
 
-    # Strip .NS suffix
     base_ticker = ticker.upper().split(".")[0]
-    # Screener.in URL for consolidated financials
-    screener_url = f"https://www.screener.in/company/{base_ticker}/"
-
+    url = f"https://www.screener.in/company/{base_ticker}/"
     page = None
+
     try:
         if not _is_brave_running_with_debug():
             if not _relaunch_brave_with_debug():
@@ -68,48 +96,49 @@ def fetch_screener_pl_screenshot(ticker: str) -> Optional[bytes]:
                 return None
 
         with sync_playwright() as p:
-            logger.info(f"Connecting to Brave on port {DEBUG_PORT}...")
+            logger.info(f"Connecting to Brave (port {DEBUG_PORT})...")
             browser = p.chromium.connect_over_cdp(f"http://localhost:{DEBUG_PORT}")
             context = browser.contexts[0]
 
-            logger.info(f"Opening screener.in for {base_ticker}...")
             page = context.new_page()
-            page.set_viewport_size({"width": 1440, "height": 900})
-            page.goto(screener_url, timeout=30000, wait_until="domcontentloaded")
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_selector("#profit-loss", timeout=15000)
 
-            # Screener.in may redirect to standalone if no consolidated data exists
-            # Check and fall back to standalone
-            if "consolidated" in page.url and page.locator("#profit-loss").count() == 0:
-                standalone_url = f"https://www.screener.in/company/{base_ticker}/"
-                logger.info(f"No consolidated data, trying standalone: {standalone_url}")
-                page.goto(standalone_url, timeout=30000, wait_until="domcontentloaded")
+            # Scroll to bottom once to trigger lazy-load, then wait briefly.
+            # For text/DOM extraction we don't need the CSS rendering tricks
+            # that screenshots require — the data is already in the HTML.
+            logger.info("Triggering lazy-load via single scroll-to-bottom...")
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(2.0)
+            page.evaluate("window.scrollTo(0, 0)")
+            logger.info("Lazy-load triggered.")
 
-            # Wait for the P&L section to load
-            pl_selector = "#profit-loss"
-            logger.info("Waiting for Profit & Loss section...")
-            try:
-                page.wait_for_selector(pl_selector, timeout=20000)
-            except PlaywrightTimeoutError:
-                logger.warning(f"P&L section not found on screener.in for {base_ticker}")
-                page.close()
-                return None
+            # Extract each section as plain text
+            parts = []
+            for selector, label in SECTIONS:
+                table_text = page.evaluate(_TABLE_TO_TEXT_JS, selector)
+                summary_text = page.evaluate(_SUMMARY_JS, selector)
 
-            # Scroll to the P&L section so it's fully in view
-            pl_element = page.locator(pl_selector)
-            pl_element.scroll_into_view_if_needed()
-            time.sleep(1.5)  # Let the section fully render after scrolling
-
-            # Take screenshot of ONLY the P&L section element
-            logger.info("Taking screenshot of P&L section...")
-            screenshot_bytes = pl_element.screenshot()
-            logger.info(f"✅ P&L screenshot captured ({len(screenshot_bytes)} bytes) for {base_ticker}")
+                if table_text:
+                    parts.append(f"=== {label} ===\n{table_text}")
+                    if summary_text and summary_text.strip():
+                        parts.append(f"--- {label} Summary ---\n{summary_text.strip()}")
+                else:
+                    logger.warning(f"No table found for section: {label}")
 
             page.close()
             page = None
-            return screenshot_bytes
+
+            if not parts:
+                logger.error("No data extracted from screener.in")
+                return None
+
+            result = f"Company: {base_ticker}\nSource: screener.in\n\n" + "\n\n".join(parts)
+            logger.info(f"✅ Extracted {len(result)} chars of financial data for {base_ticker}")
+            return result
 
     except Exception as e:
-        logger.error(f"Screener.in fetch error for {ticker}: {e}")
+        logger.error(f"Screener fetch error for {ticker}: {e}")
         return None
     finally:
         if page is not None:
