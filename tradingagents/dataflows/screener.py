@@ -113,8 +113,55 @@ def fetch_screener_data(ticker: str) -> Optional[str]:
             page.evaluate("window.scrollTo(0, 0)")
             logger.info("Lazy-load triggered.")
 
+            # Extract top card data (company info, ratios, about section)
+            top_card_data = page.evaluate("""
+                () => {
+                    const top = document.querySelector('#top');
+                    if (!top) return null;
+                    
+                    const h1 = top.querySelector('h1');
+                    const name = h1 ? h1.innerText.trim() : '';
+                    
+                    const linksDiv = top.querySelector('.company-links') || top.querySelector('.links');
+                    const linksText = linksDiv ? linksDiv.innerText.replace(/\\n/g, ' | ').trim() : '';
+                    
+                    const ratiosLi = Array.from(top.querySelectorAll('#top-ratios li'));
+                    const ratiosText = ratiosLi.map(li => {
+                        const nameSpan = li.querySelector('.name');
+                        const valueSpan = li.querySelector('.value');
+                        const n = nameSpan ? nameSpan.innerText.trim() : '';
+                        const v = valueSpan ? valueSpan.innerText.trim() : '';
+                        return `${n}: ${v}`;
+                    }).join('\\n');
+                    
+                    const profileDiv = top.querySelector('.company-profile');
+                    const profileText = profileDiv ? profileDiv.innerText.trim() : '';
+                    
+                    return {
+                        name,
+                        linksText,
+                        ratiosText,
+                        profileText
+                    };
+                }
+            """)
+
             # Extract each section as plain text
             parts = []
+            if top_card_data:
+                top_parts = []
+                if top_card_data.get("name"):
+                    top_parts.append(f"Company Name: {top_card_data['name']}")
+                if top_card_data.get("linksText"):
+                    top_parts.append(f"Links/Identifiers: {top_card_data['linksText']}")
+                if top_card_data.get("ratiosText"):
+                    top_parts.append(f"=== Key Ratios ===\n{top_card_data['ratiosText']}")
+                if top_card_data.get("profileText"):
+                    profile_clean = top_card_data['profileText'].replace("READ MORE", "").strip()
+                    top_parts.append(f"=== Company Profile & Key Points ===\n{profile_clean}")
+                
+                parts.append("\n".join(top_parts))
+
             for selector, label in SECTIONS:
                 table_text = page.evaluate(_TABLE_TO_TEXT_JS, selector)
                 summary_text = page.evaluate(_SUMMARY_JS, selector)
